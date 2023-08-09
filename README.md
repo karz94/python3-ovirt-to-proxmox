@@ -7,15 +7,15 @@ Prerequisites:
 
 How to use:
 1. Mount oVirt NFS storage locally on Proxmox node.
- A) mkdir -p /media/nfs/STORAGE_DOMAIN
- B) mount -o ro 1.2.3.4:/mnt/STORAGE_DOMAIN /media/nfs/STORAGE_DOMAIN
+   * mkdir -p /media/nfs/STORAGE_DOMAIN
+   * mount -o ro 1.2.3.4:/mnt/STORAGE_DOMAIN /media/nfs/STORAGE_DOMAIN
 
-2. Adjust settings in settings.yaml
- A) Set "storage" to destination storage on proxmox node.
- B) Set "nfs_base_dir" to local NFS mount on node
- C) Set "node" to excact name of the node.
+3. Adjust settings in settings.yaml
+   * Set "storage" to destination storage on proxmox node.
+   * Set "nfs_base_dir" to local NFS mount on node
+   * Set "node" to excact name of the node.
 
-3. Script execution examples
- A) Move VM with exact match. Execute "python3 ovirt_to_proxmox.py --vmname MYVM"
- B) Move VMs based on name pattern and wildcard. Execute "python3 ovirt_to_proxmox.py --vmname MYVM*"
- C) Move all VMs with wildcard, catch all. Execute "python3 ovirt_to_proxmox.py --vmname *"
+5. Script execution examples
+   * Move VM with exact match. Execute "python3 ovirt_to_proxmox.py --vmname MYVM"
+   * Move VMs based on name pattern and wildcard. Execute "python3 ovirt_to_proxmox.py --vmname MYVM*"
+   * Move all VMs with wildcard, catch all. Execute "python3 ovirt_to_proxmox.py --vmname *"
