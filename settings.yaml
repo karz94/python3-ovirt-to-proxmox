@@ -1,0 +1,13 @@
+ovirt:
+  engine_url: 'https://2.2.2.2/ovirt-engine/api'
+  username: 'admin@internal'
+  password: 'MY_PASSWORD'
+  cert: 'ca.pem'
+
+proxmox:
+  ip: '1.1.1.1'
+  username: 'root@pam'
+  password: 'MY_PASSWORD'
+  storage: 'local'
+  nfs_base_dir: '/media/nfs'
+  node: 'MY_NODE_NAME'
