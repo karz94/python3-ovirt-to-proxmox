@@ -119,7 +119,7 @@ def create_vm(ovirt_vms_dict):
             'hotplug': 1,
             'tablet': 1,
             'vga': 'qxl',
-            'start': '0'
+            'start': '1'
         }
 
         if vm['nics']:
