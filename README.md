@@ -13,7 +13,7 @@ How to use:
 3. Adjust settings in settings.yaml
    * Set "storage" to destination storage on proxmox node.
    * Set "nfs_base_dir" to local NFS mount on node
-   * Set "node" to excact name of the node.
+   * Set "node" to excact name of the proxmox node.
 
 5. Script execution examples
    * Move VM with exact match. Execute "python3 ovirt_to_proxmox.py --vmname MYVM"
