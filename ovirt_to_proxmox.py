@@ -9,26 +9,44 @@ import argparse
 import json
 import time
 import yaml
+import logging
+import sys
+from typing import Dict, Any
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 def ovirt_api():
-    ovirt_api = sdk.Connection(
-        url=settings['ovirt']['engine_url'],
-        username=settings['ovirt']['username'],
-        password=settings['ovirt']['password'],
-        ca_file=settings['ovirt']['cert'],
-    )
-
-    return(ovirt_api)
+    try:
+        ovirt_api = sdk.Connection(
+            url=settings['ovirt']['engine_url'],
+            username=settings['ovirt']['username'],
+            password=settings['ovirt']['password'],
+            ca_file=settings['ovirt']['cert'],
+        )
+        logger.info("Successfully connected to oVirt API")
+        return ovirt_api
+    except Exception as e:
+        logger.error(f"Failed to connect to oVirt API: {str(e)}")
+        sys.exit(1)
 
 def proxmox_api():
-    proxmox_api = ProxmoxAPI(
-        settings['proxmox']['ip'],
-        user=settings['proxmox']['username'],
-        password=settings['proxmox']['password'],
-        verify_ssl=False
-    )
-
-    return(proxmox_api)
+    try:
+        proxmox_api = ProxmoxAPI(
+            settings['proxmox']['ip'],
+            user=settings['proxmox']['username'],
+            password=settings['proxmox']['password'],
+            verify_ssl=False
+        )
+        logger.info("Successfully connected to Proxmox API")
+        return proxmox_api
+    except Exception as e:
+        logger.error(f"Failed to connect to Proxmox API: {str(e)}")
+        sys.exit(1)
 
 def bytesto(bytes, to, bsize=1024):
     a = {'k' : 1, 'm': 2, 'g' : 3, 't' : 4, 'p' : 5, 'e' : 6 }
@@ -37,13 +55,27 @@ def bytesto(bytes, to, bsize=1024):
     return bytes / (bsize ** a[to])
 
 def ovirt_shutdown_vm(vmid):
-    vm_service = vms_service.vm_service(vmid)
-    vm_service.shutdown()
-    while True:
-        time.sleep(5)
-        vm = vm_service.get()
-        if vm.status == types.VmStatus.DOWN:
-            break
+    try:
+        vm_service = vms_service.vm_service(vmid)
+        vm_service.shutdown()
+        logger.info(f"Initiating shutdown for VM ID: {vmid}")
+
+        shutdown_timeout = 300  # 5 minutes timeout
+        start_time = time.time()
+
+        while True:
+            if time.time() - start_time > shutdown_timeout:
+                raise TimeoutError(f"VM {vmid} shutdown timed out after {shutdown_timeout} seconds")
+
+            time.sleep(5)
+            vm = vm_service.get()
+            if vm.status == types.VmStatus.DOWN:
+                logger.info(f"VM {vmid} successfully shut down")
+                break
+
+    except Exception as e:
+        logger.error(f"Failed to shutdown VM {vmid}: {str(e)}")
+        raise
 
 def get_all_vnics():
     profiles_service = ovirt_api.system_service().vnic_profiles_service()
@@ -58,7 +90,10 @@ def get_vm_nics_by_vmid(vmid):
     nics_service = vms_service.vm_service(vmid).nics_service()
     nics_dict = {}
     for nic in nics_service.list():
-        nics_dict[nic.vnic_profile.id] = nic.mac.address
+        if nic.vnic_profile is not None:
+            nics_dict[nic.vnic_profile.id] = nic.mac.address
+        else:
+            logger.warning(f"NIC found without vNIC profile in VM {vmid}")
 
     return(nics_dict)
 
@@ -78,7 +113,11 @@ def get_vm_disks_by_vmid(vmid):
     return(disks_dict)
 
 def get_vm_configuration(vm_name):
-    virtual_machines = vms_service.list(search=f"status=up name={vm_name}")
+    virtual_machines = vms_service.list(search=f"name={vm_name}")
+    if not virtual_machines:
+        logger.error(f"No VMs found matching name: {vm_name}")
+        sys.exit(1)
+
     vm_list_dict = {}
     for VM in virtual_machines:
         vm_list_dict[VM.name] = {}
@@ -100,11 +139,12 @@ def get_vm_configuration(vm_name):
     return(vm_list_dict)
 
 def create_vm(ovirt_vms_dict):
-    node = proxmox_api.nodes(settings["proxmox"]["node"])
-    for vm_index, vm in enumerate(ovirt_vms_dict.values()):
-        ovirt_shutdown_vm(vm['id'])
-        vmid = proxmox_api.cluster.nextid.get()
-        vm_cfg = {
+    try:
+        node = proxmox_api.nodes(settings["proxmox"]["node"])
+        for vm_index, vm in enumerate(ovirt_vms_dict.values()):
+            ovirt_shutdown_vm(vm['id'])
+            vmid = proxmox_api.cluster.nextid.get()
+            vm_cfg = {
             'vmid' : vmid,
             'name' : vm['name'],
             'memory' : vm['memory'],
@@ -124,20 +164,35 @@ def create_vm(ovirt_vms_dict):
 
         if vm['nics']:
             for nic_index, nic_vlan in enumerate(vm['nics'].items()):
-                vm_cfg[f'net{nic_index}'] = f'virtio,bridge=vmbr1,macaddr={nic_vlan[0]},tag={nic_vlan[1].strip("vlan")}'
+                vm_cfg[f'net{nic_index}'] = f'virtio,bridge=mgmtbr,macaddr={nic_vlan[0]}'
 
         if vm['disks']:
             for disk_index, (disk, disk_details) in enumerate(vm['disks'].items()):
                 vm_cfg[f'scsi{disk_index}'] = f'{settings["proxmox"]["storage"]}:0,import-from={settings["proxmox"]["nfs_base_dir"]}/{disk_details["storage"]}/{disk_details["domain_id"]}/images/{disk_details["disk_id"]}/{disk_details["image_id"]},media=disk,format=qcow2,discard=on,ssd=1,iothread=1'
 
-        print(json.dumps(vm_cfg, indent=4))
+        logger.info(f"Creating VM with configuration:\n{json.dumps(vm_cfg, indent=4)}")
         task_id = getattr(node, 'qemu').create(**vm_cfg)
         task_status = node.tasks(task_id).status.get()
 
+        task_timeout = 1800  # 30 minutes timeout
+        start_time = time.time()
+
         while task_status['status'] == 'running':
+            if time.time() - start_time > task_timeout:
+                raise TimeoutError(f"VM creation timed out after {task_timeout} seconds")
+
             task_status = node.tasks(task_id).status.get()
-            print(f"Task status: {task_status['status']}")
+            logger.info(f"Task status: {task_status['status']}")
             time.sleep(3)
+
+        if task_status['status'] != 'stopped' or task_status.get('exitstatus') != 'OK':
+            raise Exception(f"VM creation failed: {task_status}")
+
+        logger.info(f"Successfully created VM {vm['name']} with ID {vmid}")
+
+    except Exception as e:
+        logger.error(f"Failed to create VMs: {str(e)}")
+        sys.exit(1)
 
 if __name__ == '__main__':
     # Args
